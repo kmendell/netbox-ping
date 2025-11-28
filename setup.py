@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='netbox-ping',
-    version='0.49',
+    version='0.50',
     description='A Fork of netbox-ping',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',

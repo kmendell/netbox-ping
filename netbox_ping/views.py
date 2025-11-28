@@ -8,9 +8,10 @@ from ipam.models import Prefix, IPAddress
 from ipaddress import ip_network, ip_interface
 import subprocess
 import concurrent.futures
-from datetime import date
+from datetime import date, datetime
 from django.http import JsonResponse
 import platform
+import os
 
 from .utils import UnifiedInterface, natural_keys, perform_dns_lookup
 from .forms import InterfaceComparisonForm
@@ -18,8 +19,36 @@ from extras.models import Tag
 from .models import PluginSettingsModel
 import logging
 
-config = settings.PLUGINS_CONFIG['netbox_ping']
+config = settings.PLUGINS_CONFIG.get('netbox_ping', {})
+
+# Set up dedicated file logger for the plugin
 logger = logging.getLogger('netbox.netbox_ping')
+
+# Create a file handler for debug logging
+LOG_FILE = '/var/log/netbox/netbox_ping_debug.log'
+try:
+    # Ensure log directory exists
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    ))
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.DEBUG)
+except (PermissionError, OSError) as e:
+    # Fallback: try writing to /tmp if /var/log/netbox is not writable
+    LOG_FILE = '/tmp/netbox_ping_debug.log'
+    try:
+        file_handler = logging.FileHandler(LOG_FILE)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+        logger.addHandler(file_handler)
+        logger.setLevel(logging.DEBUG)
+    except Exception:
+        pass  # Give up on file logging
 
 
 class InterfaceComparisonView(LoginRequiredMixin, PermissionRequiredMixin, View):
@@ -197,28 +226,50 @@ class PingSubnetView(LoginRequiredMixin, PermissionRequiredMixin, View):
             timeout: Timeout in seconds per attempt (default 2)
         """
         ip_str = str(ip)
+        logger.info(f"=== PING START: {ip_str} ===")
+        logger.debug(f"Platform: {platform.system()}, Retries: {retries}, Timeout: {timeout}s")
+        
         for attempt in range(retries):
             try:
-                # Use -c 1 for single packet, -W for timeout
-                # On macOS, -W is in milliseconds, on Linux it's seconds
+                # Build the ping command based on platform
                 if platform.system() == 'Darwin':  # macOS
-                    timeout_arg = str(timeout * 1000)  # Convert to milliseconds
+                    # macOS: -W is in milliseconds
+                    cmd = ['ping', '-c', '1', '-W', str(timeout * 1000), ip_str]
                 else:  # Linux and others
-                    timeout_arg = str(timeout)
+                    # Linux: -W is in seconds
+                    cmd = ['ping', '-c', '1', '-W', str(timeout), ip_str]
+                
+                logger.debug(f"Attempt {attempt + 1}/{retries}: Running command: {' '.join(cmd)}")
                 
                 result = subprocess.run(
-                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=timeout + 1  # subprocess timeout slightly longer
+                    timeout=timeout + 2  # subprocess timeout slightly longer
                 )
+                
+                stdout = result.stdout.decode('utf-8', errors='ignore')
+                stderr = result.stderr.decode('utf-8', errors='ignore')
+                
+                logger.debug(f"Return code: {result.returncode}")
+                logger.debug(f"STDOUT: {stdout[:500] if stdout else '(empty)'}")
+                if stderr:
+                    logger.debug(f"STDERR: {stderr[:500]}")
+                
                 if result.returncode == 0:
+                    logger.info(f"=== PING SUCCESS: {ip_str} (attempt {attempt + 1}) ===")
                     return ip_str, True
-            except subprocess.TimeoutExpired:
+                else:
+                    logger.debug(f"Ping failed with return code {result.returncode}")
+                    
+            except subprocess.TimeoutExpired as e:
+                logger.warning(f"Attempt {attempt + 1}: Timeout expired for {ip_str}: {e}")
                 continue
             except Exception as e:
-                logger.debug(f"Ping attempt {attempt + 1} failed for {ip_str}: {e}")
+                logger.error(f"Attempt {attempt + 1}: Exception pinging {ip_str}: {type(e).__name__}: {e}")
                 continue
+        
+        logger.info(f"=== PING FAILED: {ip_str} (all {retries} attempts failed) ===")
         return ip_str, False
 
     def get(self, request, prefix_id):
@@ -700,33 +751,68 @@ class PingSingleIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
     def ping_single_ip(self, ip, retries=3, timeout=2):
         """Ping a single IP with retries for reliability"""
         ip_str = str(ip)
+        logger.info(f\"\"\"
+================================================================================
+PING SINGLE IP DEBUG - {datetime.now().isoformat()}
+================================================================================
+Target IP: {ip_str}
+Platform: {platform.system()}
+Retries: {retries}
+Timeout: {timeout}s
+================================================================================\"\"\"
+        )
+        
         for attempt in range(retries):
             try:
+                # Build the ping command based on platform
                 if platform.system() == 'Darwin':  # macOS
-                    timeout_arg = str(timeout * 1000)
-                else:
-                    timeout_arg = str(timeout)
+                    cmd = ['ping', '-c', '1', '-W', str(timeout * 1000), ip_str]
+                else:  # Linux
+                    cmd = ['ping', '-c', '1', '-W', str(timeout), ip_str]
+                
+                logger.info(f"Attempt {attempt + 1}/{retries}: Executing: {' '.join(cmd)}")
                 
                 result = subprocess.run(
-                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=timeout + 1
+                    timeout=timeout + 2
                 )
+                
+                stdout = result.stdout.decode('utf-8', errors='ignore')
+                stderr = result.stderr.decode('utf-8', errors='ignore')
+                
+                logger.info(f"Return code: {result.returncode}")
+                logger.info(f"STDOUT:\\n{stdout}")
+                if stderr:
+                    logger.warning(f"STDERR:\\n{stderr}")
+                
                 if result.returncode == 0:
+                    logger.info(f"✅ PING SUCCESS for {ip_str} on attempt {attempt + 1}")
                     return True
-            except subprocess.TimeoutExpired:
+                else:
+                    logger.warning(f"❌ Ping returned non-zero: {result.returncode}")
+                    
+            except subprocess.TimeoutExpired as e:
+                logger.error(f"Attempt {attempt + 1}: TIMEOUT for {ip_str}: {e}")
                 continue
+            except FileNotFoundError as e:
+                logger.error(f"CRITICAL: ping command not found! {e}")
+                return False
             except Exception as e:
-                logger.debug(f"Ping attempt {attempt + 1} failed for {ip_str}: {e}")
+                logger.error(f"Attempt {attempt + 1}: EXCEPTION for {ip_str}: {type(e).__name__}: {e}")
                 continue
+        
+        logger.info(f"❌ PING FAILED for {ip_str} after all {retries} attempts")
         return False
 
     def get(self, request, pk=None, ip_address=None):
+        logger.info(f"PingSingleIPView called with pk={pk}, ip_address={ip_address}")
         try:
             # Get IP object either by pk or by address
             if pk:
                 ip_obj = get_object_or_404(IPAddress, pk=pk)
+                logger.info(f"Found IP by pk: {ip_obj.address}")
             elif ip_address:
                 # Handle IP address with or without prefix length
                 if '/' in ip_address:
@@ -736,9 +822,12 @@ class PingSingleIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
                     # Try to find the IP without prefix length
                     ip_obj = IPAddress.objects.filter(address__startswith=ip_address).first()
                     if not ip_obj:
+                        logger.error(f"IP address {ip_address} not found in database")
                         messages.error(request, f"IP address {ip_address} not found")
                         return redirect('ipam:ipaddress_list')
+                logger.info(f"Found IP by address: {ip_obj.address}")
             else:
+                logger.error("No IP address specified in request")
                 messages.error(request, "No IP address specified")
                 return redirect('ipam:ipaddress_list')
             
