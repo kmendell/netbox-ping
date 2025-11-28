@@ -751,16 +751,13 @@ class PingSingleIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
     def ping_single_ip(self, ip, retries=3, timeout=2):
         """Ping a single IP with retries for reliability"""
         ip_str = str(ip)
-        logger.info(f\"\"\"
-================================================================================
-PING SINGLE IP DEBUG - {datetime.now().isoformat()}
-================================================================================
-Target IP: {ip_str}
-Platform: {platform.system()}
-Retries: {retries}
-Timeout: {timeout}s
-================================================================================\"\"\"
-        )
+        logger.info("=" * 80)
+        logger.info(f"PING SINGLE IP DEBUG - {datetime.now().isoformat()}")
+        logger.info("=" * 80)
+        logger.info(f"Target IP: {ip_str}")
+        logger.info(f"Platform: {platform.system()}")
+        logger.info(f"Retries: {retries}, Timeout: {timeout}s")
+        logger.info("=" * 80)
         
         for attempt in range(retries):
             try:
@@ -783,15 +780,15 @@ Timeout: {timeout}s
                 stderr = result.stderr.decode('utf-8', errors='ignore')
                 
                 logger.info(f"Return code: {result.returncode}")
-                logger.info(f"STDOUT:\\n{stdout}")
+                logger.info(f"STDOUT: {stdout}")
                 if stderr:
-                    logger.warning(f"STDERR:\\n{stderr}")
+                    logger.warning(f"STDERR: {stderr}")
                 
                 if result.returncode == 0:
-                    logger.info(f"✅ PING SUCCESS for {ip_str} on attempt {attempt + 1}")
+                    logger.info(f"PING SUCCESS for {ip_str} on attempt {attempt + 1}")
                     return True
                 else:
-                    logger.warning(f"❌ Ping returned non-zero: {result.returncode}")
+                    logger.warning(f"Ping returned non-zero: {result.returncode}")
                     
             except subprocess.TimeoutExpired as e:
                 logger.error(f"Attempt {attempt + 1}: TIMEOUT for {ip_str}: {e}")
@@ -803,7 +800,7 @@ Timeout: {timeout}s
                 logger.error(f"Attempt {attempt + 1}: EXCEPTION for {ip_str}: {type(e).__name__}: {e}")
                 continue
         
-        logger.info(f"❌ PING FAILED for {ip_str} after all {retries} attempts")
+        logger.info(f"PING FAILED for {ip_str} after all {retries} attempts")
         return False
 
     def get(self, request, pk=None, ip_address=None):
