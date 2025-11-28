@@ -10,6 +10,7 @@ import subprocess
 import concurrent.futures
 from datetime import date
 from django.http import JsonResponse
+import platform
 
 from .utils import UnifiedInterface, natural_keys, perform_dns_lookup
 from .forms import InterfaceComparisonForm
@@ -187,16 +188,38 @@ class PingSubnetView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View for pinging existing IPs in a subnet"""
     permission_required = "ipam.view_prefix"
 
-    def ping_ip(self, ip):
-        """Ping an IP address and return tuple of (ip_str, is_alive)"""
-        try:
-            subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)], 
-                         stdout=subprocess.DEVNULL, 
-                         stderr=subprocess.DEVNULL, 
-                         check=True)
-            return str(ip), True
-        except subprocess.CalledProcessError:
-            return str(ip), False
+    def ping_ip(self, ip, retries=3, timeout=2):
+        """Ping an IP address with retries and return tuple of (ip_str, is_alive)
+        
+        Args:
+            ip: IP address to ping
+            retries: Number of ping attempts (default 3)
+            timeout: Timeout in seconds per attempt (default 2)
+        """
+        ip_str = str(ip)
+        for attempt in range(retries):
+            try:
+                # Use -c 1 for single packet, -W for timeout
+                # On macOS, -W is in milliseconds, on Linux it's seconds
+                if platform.system() == 'Darwin':  # macOS
+                    timeout_arg = str(timeout * 1000)  # Convert to milliseconds
+                else:  # Linux and others
+                    timeout_arg = str(timeout)
+                
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout + 1  # subprocess timeout slightly longer
+                )
+                if result.returncode == 0:
+                    return ip_str, True
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception as e:
+                logger.debug(f"Ping attempt {attempt + 1} failed for {ip_str}: {e}")
+                continue
+        return ip_str, False
 
     def get(self, request, prefix_id):
         prefix = get_object_or_404(Prefix.objects.filter(id=prefix_id))
@@ -364,15 +387,31 @@ class ScanSubnetView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View for scanning entire subnet and adding all discovered IPs"""
     permission_required = "ipam.view_prefix"
 
-    def ping_ip(self, ip):
-        """Ping a single IP address"""
-        try:
-            result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)], 
-                                  capture_output=True, 
-                                  timeout=2)
-            return str(ip), result.returncode == 0
-        except:
-            return str(ip), False
+    def ping_ip(self, ip, retries=2, timeout=2):
+        """Ping a single IP address with retries for reliability
+        
+        Using fewer retries for subnet scanning to balance speed and accuracy.
+        """
+        ip_str = str(ip)
+        for attempt in range(retries):
+            try:
+                if platform.system() == 'Darwin':  # macOS
+                    timeout_arg = str(timeout * 1000)
+                else:
+                    timeout_arg = str(timeout)
+                
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    capture_output=True,
+                    timeout=timeout + 1
+                )
+                if result.returncode == 0:
+                    return ip_str, True
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception:
+                continue
+        return ip_str, False
 
     def get(self, request, prefix_id):
         prefix = get_object_or_404(Prefix, id=prefix_id)
@@ -530,16 +569,32 @@ class ScanAllView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View for scanning all prefixes"""
     permission_required = "ipam.view_prefix"
 
-    def ping_ip(self, ip):
-        """Ping a single IP address"""
-        try:
-            result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)], 
-                                  capture_output=True, 
-                                  timeout=2)
-            return str(ip), result.returncode == 0
-        except Exception as e:
-            print(f"Error pinging {ip}: {str(e)}")
-            return str(ip), False
+    def ping_ip(self, ip, retries=2, timeout=2):
+        """Ping a single IP address with retries for reliability
+        
+        Using fewer retries for large-scale scanning to balance speed and accuracy.
+        """
+        ip_str = str(ip)
+        for attempt in range(retries):
+            try:
+                if platform.system() == 'Darwin':  # macOS
+                    timeout_arg = str(timeout * 1000)
+                else:
+                    timeout_arg = str(timeout)
+                
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    capture_output=True,
+                    timeout=timeout + 1
+                )
+                if result.returncode == 0:
+                    return ip_str, True
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception as e:
+                logger.debug(f"Ping attempt {attempt + 1} failed for {ip_str}: {e}")
+                continue
+        return ip_str, False
 
     def get(self, request):
         messages.info(request, "Starting scan of all prefixes...")
@@ -642,15 +697,91 @@ class PingSingleIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
     """View for pinging a single IP address"""
     permission_required = "ipam.view_ipaddress"
 
-    def get(self, request, ip_address):
+    def ping_single_ip(self, ip, retries=3, timeout=2):
+        """Ping a single IP with retries for reliability"""
+        ip_str = str(ip)
+        for attempt in range(retries):
+            try:
+                if platform.system() == 'Darwin':  # macOS
+                    timeout_arg = str(timeout * 1000)
+                else:
+                    timeout_arg = str(timeout)
+                
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', timeout_arg, ip_str],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout + 1
+                )
+                if result.returncode == 0:
+                    return True
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception as e:
+                logger.debug(f"Ping attempt {attempt + 1} failed for {ip_str}: {e}")
+                continue
+        return False
+
+    def get(self, request, pk=None, ip_address=None):
         try:
-            # Split IP and prefix length
-            ip, prefix_length = ip_address.split('/')
-            ip_obj = get_object_or_404(IPAddress, address=f"{ip}/{prefix_length}")
+            # Get IP object either by pk or by address
+            if pk:
+                ip_obj = get_object_or_404(IPAddress, pk=pk)
+            elif ip_address:
+                # Handle IP address with or without prefix length
+                if '/' in ip_address:
+                    ip, prefix_length = ip_address.split('/')
+                    ip_obj = get_object_or_404(IPAddress, address=f"{ip}/{prefix_length}")
+                else:
+                    # Try to find the IP without prefix length
+                    ip_obj = IPAddress.objects.filter(address__startswith=ip_address).first()
+                    if not ip_obj:
+                        messages.error(request, f"IP address {ip_address} not found")
+                        return redirect('ipam:ipaddress_list')
+            else:
+                messages.error(request, "No IP address specified")
+                return redirect('ipam:ipaddress_list')
             
-            # Reuse existing ping and lookup logic
-            ping_view = PingSubnetView()
-            ip_str, is_alive, hostname = ping_view.ping_and_lookup_ip(ip_obj.address.ip)
+            # Get the actual IP without prefix for pinging
+            ip_str = str(ip_obj.address.ip)
+            
+            # Ping with retries for reliability
+            is_alive = self.ping_single_ip(ip_str)
+            
+            # Get settings for DNS lookup
+            settings = PluginSettingsModel.get_settings()
+            hostname = None
+            
+            if is_alive and settings.perform_dns_lookup:
+                dns_servers = [s for s in [settings.dns_server1, settings.dns_server2, settings.dns_server3] if s]
+                hostname, _ = perform_dns_lookup(ip_str, dns_servers) if dns_servers else (None, False)
+            
+            # Update IP object status
+            if not ip_obj.custom_field_data:
+                ip_obj.custom_field_data = {}
+            
+            ip_obj.custom_field_data['Up_Down'] = is_alive
+            
+            # Update DNS name if found
+            if hostname:
+                ip_obj.dns_name = hostname.lower()
+            
+            # Update tags if enabled
+            if settings.update_tags:
+                try:
+                    online_tag = Tag.objects.get(name='online')
+                    offline_tag = Tag.objects.get(name='offline')
+                    
+                    if is_alive:
+                        ip_obj.tags.add(online_tag)
+                        ip_obj.tags.remove(offline_tag)
+                    else:
+                        ip_obj.tags.add(offline_tag)
+                        ip_obj.tags.remove(online_tag)
+                except Tag.DoesNotExist:
+                    pass
+            
+            ip_obj.save()
             
             if is_alive:
                 status = "🟢 up"
@@ -663,6 +794,7 @@ class PingSingleIPView(LoginRequiredMixin, PermissionRequiredMixin, View):
             return redirect('ipam:ipaddress', pk=ip_obj.pk)
             
         except Exception as e:
+            logger.error(f"Error pinging IP: {str(e)}")
             messages.error(request, f"Error pinging IP: {str(e)}")
             return redirect('ipam:ipaddress_list')
 

@@ -38,32 +38,39 @@ def initialize_plugin():
     ipaddress_ct = ContentType.objects.get(app_label='ipam', model='ipaddress')
     prefix_ct = ContentType.objects.get(app_label='ipam', model='prefix')
     
-    # Create "Ping" button for IP Address pages
-    link, _ = CustomLink.objects.get_or_create(
+    # Create or update "Ping" button for IP Address pages
+    # Use the object.pk instead of address to avoid URL encoding issues with CIDR notation
+    link, created = CustomLink.objects.update_or_create(
         name='Ping IP',
-        link_text='Ping',
-        link_url='plugins/netbox-ping/ping-ip/{{ object.address }}/',
-        weight=100
+        defaults={
+            'link_text': 'Ping',
+            'link_url': '/plugins/netbox-ping/ping-ip/{{ object.pk }}/',
+            'weight': 100
+        }
     )
     ipaddress_type = ObjectType.objects.get(app_label='ipam', model='ipaddress')
     link.object_types.add(ipaddress_type)
 
-    # Create "Ping Subnet" button for Prefix pages
-    link, _ = CustomLink.objects.get_or_create(
+    # Create or update "Ping Subnet" button for Prefix pages
+    link, created = CustomLink.objects.update_or_create(
         name='Ping Subnet',
-        link_text='Ping Subnet',
-        link_url='plugins/netbox-ping/scan-prefix/{{ object.prefix }}/?action=ping',
-        weight=100
+        defaults={
+            'link_text': 'Ping Subnet',
+            'link_url': '/plugins/netbox-ping/scan-prefix/{{ object.prefix }}/?action=ping',
+            'weight': 100
+        }
     )
     prefix_type = ObjectType.objects.get(app_label='ipam', model='prefix')
     link.object_types.add(prefix_type)
 
-    # Create "Discover IPs" button for Prefix pages
-    link, _ = CustomLink.objects.get_or_create(
+    # Create or update "Discover IPs" button for Prefix pages
+    link, created = CustomLink.objects.update_or_create(
         name='Discover IPs',
-        link_text='Discover IPs',
-        link_url='plugins/netbox-ping/scan-prefix/{{ object.prefix }}/?action=scan',
-        weight=200
+        defaults={
+            'link_text': 'Discover IPs',
+            'link_url': '/plugins/netbox-ping/scan-prefix/{{ object.prefix }}/?action=scan',
+            'weight': 200
+        }
     )
     link.object_types.add(prefix_type)
 

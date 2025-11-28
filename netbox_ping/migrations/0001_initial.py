@@ -1,14 +1,10 @@
 from django.db import migrations, models
-import django.db.models.deletion
-import netbox.models.features
 
 
 class Migration(migrations.Migration):
     initial = True
 
-    dependencies = [
-        ('extras', '0001_initial'),  # Base NetBox dependency
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
@@ -25,6 +21,5 @@ class Migration(migrations.Migration):
                 'verbose_name_plural': 'Plugin Settings',
                 'ordering': ['pk'],
             },
-            bases=(netbox.models.features.ChangeLoggingMixin, models.Model),
         ),
     ] 

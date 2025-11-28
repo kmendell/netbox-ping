@@ -2,11 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name='netbox-ping',
-    version='0.48',
-    description='A NetBox plugin for pinging and discovering IPs',
+    version='0.49',
+    description='A Fork of netbox-ping',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/dendanskemine/netbox-ping',
+    url='https://github.com/kmendell/netbox-ping',
     author='Christian Rose',
     license='Apache 2.0',
     install_requires=[
